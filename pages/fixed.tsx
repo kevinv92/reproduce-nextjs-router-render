@@ -1,113 +1,133 @@
-/**
- * Demonstrates the HOC fix working correctly under the Edge streaming renderer.
- *
- * Two things make this safe regardless of render order:
- *
- *  1. getServerSideProps runs before any React rendering. By the time the
- *     component tree is touched, serverContextState is already in pageProps.
- *
- *  2. withStrictContext wraps this page in its own StrictContextProvider
- *     seeded from serverContextState. The provider is in the tree before
- *     the page component body executes — regardless of whether _app's
- *     provider has mounted yet.
- *
- * This pattern is safe to deploy to Vercel Edge. Even if the streaming
- * renderer calls this page before _app, the HOC-added provider is always
- * present because it is part of this page's component subtree, not _app's.
- */
 import type { GetServerSideProps } from "next";
 import { useStrictContext } from "@/lib/StrictContext";
+import { useSafeContext } from "@/lib/SafeContext";
 import {
   withStrictContext,
   getServerContextState,
 } from "@/lib/withStrictContext";
 
-// ─── Page component ───────────────────────────────────────────────────────────
-
 function FixedPage() {
-  // Safe: withStrictContext guarantees a provider is in the tree above this.
-  // context is pre-populated from getServerSideProps — never null, never
-  // in "initializing" state on first render.
-  const ctx = useStrictContext();
+  // Needs the HOC — createContext(null), throws if no provider in tree.
+  const strict = useStrictContext();
+
+  // No HOC needed — createContext(defaultValue), never throws.
+  // If _app renders after this page (Edge bug), this returns the default
+  // value instead of throwing. Safe by design.
+  const safe = useSafeContext();
 
   return (
     <main style={{ fontFamily: "monospace", padding: "2rem" }}>
-      <h1>Fixed Page (HOC pattern)</h1>
+      <h1>Fixed Page — two contexts side by side</h1>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem", marginTop: "1rem" }}>
+
+        {/* Safe context — no HOC needed */}
+        <section
+          style={{
+            background: "#f0fdf4",
+            border: "1px solid #86efac",
+            padding: "1rem",
+            borderRadius: "4px",
+          }}
+        >
+          <strong>SafeContext</strong>{" "}
+          <code style={{ fontSize: "0.75rem", color: "#666" }}>
+            createContext(defaultValue)
+          </code>
+          <pre style={{ marginTop: "0.5rem", fontSize: "0.8rem" }}>
+            {JSON.stringify(safe, null, 2)}
+          </pre>
+          <p style={{ fontSize: "0.8rem", color: "#166534", marginTop: "0.5rem" }}>
+            No HOC required. If page renders before _app, useContext returns
+            the default value — no throw, no crash.
+          </p>
+        </section>
+
+        {/* Strict context — HOC required */}
+        <section
+          style={{
+            background: "#fefce8",
+            border: "1px solid #fde047",
+            padding: "1rem",
+            borderRadius: "4px",
+          }}
+        >
+          <strong>StrictContext</strong>{" "}
+          <code style={{ fontSize: "0.75rem", color: "#666" }}>
+            createContext(null) + hard throw
+          </code>
+          <pre style={{ marginTop: "0.5rem", fontSize: "0.8rem" }}>
+            {JSON.stringify(strict, null, 2)}
+          </pre>
+          <p style={{ fontSize: "0.8rem", color: "#854d0e", marginTop: "0.5rem" }}>
+            Requires HOC. If page renders before _app without the HOC,
+            useContext returns null → throws. HOC adds its own provider
+            in the page subtree.
+          </p>
+        </section>
+      </div>
 
       <section
         style={{
-          background: "#dcfce7",
-          border: "1px solid #86efac",
+          marginTop: "1.5rem",
           padding: "1rem",
-          borderRadius: "4px",
-          marginTop: "1rem",
-        }}
-      >
-        <strong>useStrictContext() succeeded</strong> — context was available on
-        first render, pre-populated from <code>getServerSideProps</code>.
-      </section>
-
-      <h2 style={{ marginTop: "1.5rem" }}>Context value</h2>
-      <pre
-        style={{
-          background: "#f4f4f4",
-          padding: "1rem",
-          borderRadius: "4px",
-        }}
-      >
-        {JSON.stringify(ctx, null, 2)}
-      </pre>
-
-      <h2 style={{ marginTop: "1.5rem" }}>Why this works</h2>
-      <ol style={{ lineHeight: "1.8" }}>
-        <li>
-          <code>getServerSideProps</code> calls <code>getServerContextState()</code>{" "}
-          — runs entirely outside React, before any rendering.
-        </li>
-        <li>
-          <code>withStrictContext(FixedPage)</code> wraps this component in its
-          own <code>StrictContextProvider</code>, seeded from{" "}
-          <code>serverContextState</code> (from pageProps).
-        </li>
-        <li>
-          The provider is part of <em>this page&apos;s</em> subtree, not{" "}
-          <code>_app</code>. Render order between <code>_app</code> and this
-          page is irrelevant — the provider is always above this component.
-        </li>
-        <li>
-          <code>initialized: true</code> on first render — no flash of
-          uninitialized state, no hydration mismatch.
-        </li>
-      </ol>
-
-      <section
-        style={{
-          marginTop: "2rem",
-          padding: "1rem",
-          background: "#fef9c3",
+          background: "#f8fafc",
           borderRadius: "4px",
           fontSize: "0.85rem",
+          lineHeight: "1.7",
         }}
       >
-        <strong>Compare with <code>/simulate-bug</code>:</strong> that page
-        renders a hook consumer without any provider ancestor — the exact
-        failure mode this HOC pattern prevents.
+        <strong>Context risk summary</strong>
+        <table style={{ borderCollapse: "collapse", marginTop: "0.5rem", width: "100%" }}>
+          <thead>
+            <tr style={{ borderBottom: "1px solid #e2e8f0" }}>
+              <th style={{ textAlign: "left", padding: "0.25rem 0.5rem" }}>Pattern</th>
+              <th style={{ textAlign: "left", padding: "0.25rem 0.5rem" }}>Example</th>
+              <th style={{ textAlign: "left", padding: "0.25rem 0.5rem" }}>Vulnerable?</th>
+              <th style={{ textAlign: "left", padding: "0.25rem 0.5rem" }}>Fix</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td style={{ padding: "0.25rem 0.5rem" }}><code>createContext(null)</code> + hard throw</td>
+              <td style={{ padding: "0.25rem 0.5rem" }}>useFlagsmith(), useStrictContext()</td>
+              <td style={{ padding: "0.25rem 0.5rem", color: "#dc2626" }}>Yes</td>
+              <td style={{ padding: "0.25rem 0.5rem" }}>withStrictContext HOC</td>
+            </tr>
+            <tr>
+              <td style={{ padding: "0.25rem 0.5rem" }}><code>createContext(null)</code> + <code>ctx!</code></td>
+              <td style={{ padding: "0.25rem 0.5rem" }}>useFlags() in flagsmith</td>
+              <td style={{ padding: "0.25rem 0.5rem", color: "#dc2626" }}>Yes — generic TypeError</td>
+              <td style={{ padding: "0.25rem 0.5rem" }}>withStrictContext HOC</td>
+            </tr>
+            <tr>
+              <td style={{ padding: "0.25rem 0.5rem" }}><code>createContext(null)</code> + <code>ctx?.</code></td>
+              <td style={{ padding: "0.25rem 0.5rem" }}>useFlagsmithLoading()</td>
+              <td style={{ padding: "0.25rem 0.5rem", color: "#d97706" }}>Silently broken (returns undefined)</td>
+              <td style={{ padding: "0.25rem 0.5rem" }}>HOC or real default</td>
+            </tr>
+            <tr>
+              <td style={{ padding: "0.25rem 0.5rem" }}><code>createContext(defaultValue)</code></td>
+              <td style={{ padding: "0.25rem 0.5rem" }}>useSafeContext(), next-themes, zustand</td>
+              <td style={{ padding: "0.25rem 0.5rem", color: "#16a34a" }}>No</td>
+              <td style={{ padding: "0.25rem 0.5rem" }}>Nothing needed</td>
+            </tr>
+          </tbody>
+        </table>
       </section>
     </main>
   );
 }
 
-// ─── Data fetching ────────────────────────────────────────────────────────────
+export const getServerSideProps: GetServerSideProps = async () => {
+  const serverContextState = await getServerContextState();
 
-export const getServerSideProps: GetServerSideProps = async (ctx) => {
-  // ctx.req.headers could carry a session cookie; pass userId to
-  // getServerContextState for identity-scoped flags.
-  const userId = undefined; // replace with real session lookup
+  // SafeContext doesn't need server data for correctness (default value
+  // handles the no-provider case), but you can still seed it from the
+  // server for user preferences, locale from Accept-Language header, etc.
+  const safeContextValue = { theme: "dark" as const, locale: "en", featureReady: true };
 
-  const serverContextState = await getServerContextState(userId);
-  return { props: { serverContextState } };
+  return { props: { serverContextState, safeContextValue } };
 };
-
-// ─── Export wrapped ───────────────────────────────────────────────────────────
 
 export default withStrictContext(FixedPage);
