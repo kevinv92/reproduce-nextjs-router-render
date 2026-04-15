@@ -1,4 +1,5 @@
 import type { GetServerSideProps } from "next";
+import Link from "next/link";
 import { useStrictContext } from "@/lib/StrictContext";
 
 // This page deliberately does NOT pass serverContextState from getServerSideProps.
@@ -76,12 +77,12 @@ export default function Home() {
             execute before <code>_app</code> mounts its provider.{" "}
             <code>useContext</code> returns <code>null</code>,{" "}
             <code>useStrictContext()</code> throws. Visit{" "}
-            <a href="/simulate-bug">/simulate-bug</a> to see this reproduced
+            <Link href="/simulate-bug">/simulate-bug</Link> to see this reproduced
             locally.
           </li>
         </ol>
         <p>
-          Visit <a href="/fixed">/fixed</a> to see the HOC pattern that fixes
+          Visit <Link href="/fixed">/fixed</Link> to see the HOC pattern that fixes
           both failure modes.
         </p>
       </section>

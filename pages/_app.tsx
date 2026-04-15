@@ -1,4 +1,5 @@
 import type { AppProps } from "next/app";
+import Link from "next/link";
 import { StrictContextProvider, useStrictContext } from "@/lib/StrictContext";
 import { SafeContextProvider, useSafeContext } from "@/lib/SafeContext";
 
@@ -26,9 +27,9 @@ function Navbar() {
       }}
     >
       <strong>demo</strong>
-      <a href="/" style={{ color: "#94a3b8" }}>/ (broken)</a>
-      <a href="/simulate-bug" style={{ color: "#94a3b8" }}>/simulate-bug</a>
-      <a href="/fixed" style={{ color: "#86efac" }}>/fixed (HOC)</a>
+      <Link href="/" style={{ color: "#94a3b8" }}>/ (broken)</Link>
+      <Link href="/simulate-bug" style={{ color: "#94a3b8" }}>/simulate-bug</Link>
+      <Link href="/fixed" style={{ color: "#86efac" }}>/fixed (HOC)</Link>
       <span style={{ marginLeft: "auto", color: "#64748b" }}>
         <code style={{ color: strict.initialized ? "#86efac" : "#f87171" }}>
           flags:{strict.initialized ? "ready" : "uninit"}

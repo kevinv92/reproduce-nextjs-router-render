@@ -20,7 +20,7 @@
  *   for both renderToString (Node) and renderToReadableStream (Edge).
  */
 
-import { useRef } from "react";
+import type React from "react";
 import {
   StrictContextProvider,
   type StrictContextValue,
@@ -87,12 +87,8 @@ export function withStrictContext<P extends Record<string, unknown>>(
       );
     }
 
-    // useRef so createInstance isn't called on every render (mirrors
-    // the flagsmith HOC using useRef(createFlagsmithInstance()))
-    const stateRef = useRef(serverContextState);
-
     return (
-      <StrictContextProvider serverState={stateRef.current}>
+      <StrictContextProvider serverState={serverContextState}>
         <PageComponent {...(props as unknown as P)} />
       </StrictContextProvider>
     );

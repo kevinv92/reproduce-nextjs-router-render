@@ -53,10 +53,11 @@ export function StrictContextProvider({
   // is provided because the state is already populated.
   React.useEffect(() => {
     if (serverState) return;
-    setTimeout(() => {
+    const timer = setTimeout(() => {
       setState({ initialized: true, data: { feature_flag_a: true } });
     }, 50);
-  }, []);
+    return () => clearTimeout(timer);
+  }, [serverState]);
 
   return <StrictCtx.Provider value={state}>{children}</StrictCtx.Provider>;
 }
