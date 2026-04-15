@@ -33,21 +33,26 @@ export function useStrictContext(): StrictContextValue {
   return ctx;
 }
 
-// Mimics how flagsmith/react initializes asynchronously
+// Mimics how flagsmith/react initializes asynchronously.
+// Accepts an optional serverState (pre-fetched in getServerSideProps by the
+// withStrictContext HOC) so the context is never null on first render.
 export function StrictContextProvider({
   children,
+  serverState,
 }: {
   children: React.ReactNode;
+  serverState?: StrictContextValue;
 }) {
   console.log({ ps: "Provider (inside _app)", phase: "render" });
 
-  const [state, setState] = useState<StrictContextValue>({
-    initialized: false,
-    data: {},
-  });
+  const [state, setState] = useState<StrictContextValue>(
+    serverState ?? { initialized: false, data: {} }
+  );
 
-  // Simulate async init (like flagsmith.init())
+  // Simulate async init (like flagsmith.init()) — skipped when serverState
+  // is provided because the state is already populated.
   React.useEffect(() => {
+    if (serverState) return;
     setTimeout(() => {
       setState({ initialized: true, data: { feature_flag_a: true } });
     }, 50);
