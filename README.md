@@ -32,7 +32,7 @@ When the page runs before `_app`:
 3. `useFlags()` crashes with a generic `TypeError: Cannot read properties of null`
 4. `useFlagsmithLoading()` silently returns `undefined` — wrong data, no error
 
-Stack traces from the bug point to `react-dom-server.edge.production.js:4189`, confirming the Edge renderer is the culprit even for Pages Router routes.
+Stack traces from the bug point to `react-dom-server.edge.production.js:4282`, confirming the Edge renderer is the culprit even for Pages Router routes without explicit edge runtime configuration.
 
 ---
 
@@ -62,19 +62,52 @@ scripts/
 ```bash
 npm install
 
-# See the error reproduced and explained without a server
+# Reproduce the build failure locally (no edge runtime needed)
+npm run build:broken
+# Expected: next build fails with react-dom-server.edge.production.js:4282
+
+# Verify the fixed state builds cleanly
+npm run build
+
+# See the runtime error reproduced without a server
 npm run simulate
 
-# Run the dev server
+# Run the dev server and explore the routes below
 npm run dev
 ```
 
 | Route | What it shows |
 |---|---|
-| `/` | **Broken** — no HOC, no `serverContextState`. Locally: renders with `initialized: false` (wrong data). On Vercel Edge: throws |
-| `/simulate-bug` | **Throw reproduced locally** — `getServerSideProps` renders a hook consumer without any provider, catches and displays the error |
+| `/` | **Broken** — no HOC, no `serverContextState`. Shows `initialized: false` (wrong data). On Vercel Edge: throws. |
+| `/simulate-bug` | **Throw reproduced locally** — renders the hook consumer without any provider, catches and displays the exact error |
 | `/fixed` | **Fixed** — HOC pattern, both contexts initialized correctly, side-by-side comparison |
 | `/edge` | `experimental-edge` runtime — same broken pattern as `/`; throws on Vercel Edge |
+
+---
+
+## Local Reproduction (No Edge Runtime or Vercel Needed)
+
+The bug is reproducible with `npm run build:broken` — no Vercel account, no edge runtime config, no deployment.
+
+**What `build:broken` does:**
+
+1. Writes a static `pages/index.tsx` with no `getServerSideProps` (opts page into build-time static prerender)
+2. Strips `pages/_app.tsx` of its `StrictContextProvider` (simulates the no-provider scenario)
+3. Runs `next build`
+4. Restores both files — even if the build fails
+
+**Expected output:**
+
+```
+Error: useStrictContext must be used within a StrictContextProvider
+    at useStrictContext (lib/StrictContext.tsx:28:11)
+    at Home (pages/index.tsx:7:15)
+    at react-dom-server.edge.production.js:4282:23
+```
+
+**Why this works:** Next.js 15 uses `react-dom-server.edge.production.js` (the streaming Edge renderer) for static page prerendering at build time — not just for edge runtime routes. Any static page using a `createContext(null)` + throwing consumer will fail at build time without edge runtime config.
+
+The `getServerSideProps` export on `/` (and `/fixed`, `/simulate-bug`) makes those pages dynamic, opting them out of static prerendering. That's why `npm run build` (the fixed state) succeeds.
 
 ---
 
