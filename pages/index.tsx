@@ -1,4 +1,10 @@
+import type { GetServerSideProps } from "next";
 import { useStrictContext } from "@/lib/StrictContext";
+
+// getServerSideProps opts this page out of static generation so the throw
+// happens at request time (not build time). The error is the same either way:
+// useStrictContext() finds no provider because _app no longer has one.
+export const getServerSideProps: GetServerSideProps = async () => ({ props: {} });
 
 // This is the page that consumes the strict context.
 // Under renderToString: _app renders first → provider is in tree → works.
