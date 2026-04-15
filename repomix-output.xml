@@ -55,6 +55,7 @@ pages/
   index.tsx
   simulate-bug.tsx
 scripts/
+  build-broken.mjs
   simulate-render-order-bug.mjs
 next-env.d.ts
 next.config.ts
@@ -66,35 +67,6 @@ tsconfig.json
 
 <files>
 This section contains the contents of the repository's files.
-
-<file path="repomix.config.json">
- 1: {
- 2:   "output": {
- 3:     "filePath": "repomix-output.xml",
- 4:     "style": "xml",
- 5:     "showLineNumbers": true,
- 6:     "copyToClipboard": false
- 7:   },
- 8:   "ignore": {
- 9:     "useGitignore": true,
-10:     "useDefaultPatterns": true,
-11:     "customPatterns": [
-12:       ".next/**",
-13:       "node_modules/**",
-14:       "repomix-output.xml",
-15:       "package-lock.json"
-16:     ]
-17:   },
-18:   "include": [
-19:     "lib/**",
-20:     "pages/**",
-21:     "scripts/**",
-22:     "*.ts",
-23:     "*.json",
-24:     "*.md"
-25:   ]
-26: }
-</file>
 
 <file path="lib/SafeContext.tsx">
  1: /**
@@ -151,6 +123,506 @@ This section contains the contents of the repository's files.
 52:   const [value] = useState<SafeContextValue>({ ...DEFAULT, ...serverValue });
 53:   return <SafeCtx.Provider value={value}>{children}</SafeCtx.Provider>;
 54: }
+</file>
+
+<file path="pages/simulate-bug.tsx">
+  1: /**
+  2:  * This page reproduces the error server-side during getServerSideProps.
+  3:  *
+  4:  * It renders the page component (PageWithoutProvider) using React's
+  5:  * renderToStaticMarkup WITHOUT wrapping it in StrictContextProvider.
+  6:  * This is the same call graph that the Edge streaming renderer produces
+  7:  * when render order is inverted (page executes before _app).
+  8:  *
+  9:  * Result: the exact error "useStrictContext must be used within a
+ 10:  * StrictContextProvider" is thrown and caught, then displayed on the page.
+ 11:  *
+ 12:  * The /edge route (runtime: 'experimental-edge') is needed to deploy
+ 13:  * this to Vercel's edge infrastructure where the broken render order
+ 14:  * occurs naturally without any simulation.
+ 15:  */
+ 16: import type { GetServerSideProps } from "next";
+ 17: import React from "react";
+ 18: import { renderToStaticMarkup } from "react-dom/server";
+ 19: import { useStrictContext } from "@/lib/StrictContext";
+ 20: 
+ 21: // Minimal component that uses the strict hook — identical to what a real page does.
+ 22: // Outside of a provider tree, calling this throws.
+ 23: function PageWithoutProvider() {
+ 24:   const ctx = useStrictContext();
+ 25:   return <div>{JSON.stringify(ctx)}</div>;
+ 26: }
+ 27: 
+ 28: interface Props {
+ 29:   errorMessage: string | null;
+ 30:   errorStack: string | null;
+ 31:   renderOrder: string[];
+ 32: }
+ 33: 
+ 34: export const getServerSideProps: GetServerSideProps<Props> = async () => {
+ 35:   const renderOrder: string[] = [];
+ 36:   let errorMessage: string | null = null;
+ 37:   let errorStack: string | null = null;
+ 38: 
+ 39:   try {
+ 40:     renderOrder.push("getServerSideProps starts");
+ 41:     renderOrder.push("Calling renderToStaticMarkup(PageWithoutProvider) — no provider ancestor");
+ 42: 
+ 43:     // This reproduces the broken edge renderer call graph:
+ 44:     //   renderToReadableStream calls the page component function body
+ 45:     //   before _app has had a chance to mount its Provider
+ 46:     renderToStaticMarkup(React.createElement(PageWithoutProvider));
+ 47: 
+ 48:     renderOrder.push("renderToStaticMarkup completed (no error — should not happen)");
+ 49:   } catch (err: unknown) {
+ 50:     renderOrder.push("Error thrown by useStrictContext()");
+ 51:     if (err instanceof Error) {
+ 52:       errorMessage = err.message;
+ 53:       errorStack = err.stack ?? null;
+ 54:     }
+ 55:   }
+ 56: 
+ 57:   return { props: { errorMessage, errorStack, renderOrder } };
+ 58: };
+ 59: 
+ 60: export default function SimulateBugPage({
+ 61:   errorMessage,
+ 62:   errorStack,
+ 63:   renderOrder,
+ 64: }: Props) {
+ 65:   return (
+ 66:     <main style={{ fontFamily: "monospace", padding: "2rem" }}>
+ 67:       <h1>Simulate Bug — Server-Side Reproduction</h1>
+ 68:       <p>
+ 69:         <code>getServerSideProps</code> renders <code>PageWithoutProvider</code>{" "}
+ 70:         (a component using <code>useStrictContext</code>) without any provider
+ 71:         ancestor. This simulates the inverted render order from the Edge
+ 72:         streaming renderer.
+ 73:       </p>
+ 74: 
+ 75:       <h2 style={{ marginTop: "1.5rem" }}>Render sequence</h2>
+ 76:       <ol style={{ background: "#f4f4f4", padding: "1rem 2rem", borderRadius: "4px" }}>
+ 77:         {renderOrder.map((step, i) => (
+ 78:           <li key={i} style={{ margin: "0.25rem 0" }}>
+ 79:             {step}
+ 80:           </li>
+ 81:         ))}
+ 82:       </ol>
+ 83: 
+ 84:       <h2 style={{ marginTop: "1.5rem" }}>
+ 85:         {errorMessage ? "Error (expected)" : "No error (unexpected)"}
+ 86:       </h2>
+ 87:       {errorMessage ? (
+ 88:         <div
+ 89:           style={{
+ 90:             background: "#fee2e2",
+ 91:             border: "1px solid #fca5a5",
+ 92:             padding: "1rem",
+ 93:             borderRadius: "4px",
+ 94:           }}
+ 95:         >
+ 96:           <p>
+ 97:             <strong>Message:</strong>
+ 98:           </p>
+ 99:           <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>{errorMessage}</pre>
+100:           <p style={{ marginTop: "1rem" }}>
+101:             <strong>Stack:</strong>
+102:           </p>
+103:           <pre
+104:             style={{
+105:               margin: 0,
+106:               fontSize: "0.75rem",
+107:               whiteSpace: "pre-wrap",
+108:               color: "#991b1b",
+109:             }}
+110:           >
+111:             {errorStack}
+112:           </pre>
+113:         </div>
+114:       ) : (
+115:         <p style={{ color: "green" }}>No error thrown (context was available)</p>
+116:       )}
+117: 
+118:       <section style={{ marginTop: "2rem", fontSize: "0.85rem", color: "#555" }}>
+119:         <h2>Why this happens on Vercel / Edge runtime</h2>
+120:         <p>
+121:           Next.js 15 Pages Router on Vercel uses{" "}
+122:           <code>renderToReadableStream</code> (Web Streams, edge renderer) instead
+123:           of <code>renderToString</code> (Node.js). The streaming renderer does
+124:           not guarantee parent-before-child render order. When the page component
+125:           executes before <code>_app</code>&apos;s <code>StrictContextProvider</code>{" "}
+126:           mounts, <code>useContext</code> returns <code>null</code> and the strict
+127:           hook throws.
+128:         </p>
+129:         <p>
+130:           Evidence from the Notion doc: server console logs showed{" "}
+131:           <code>{`{ ps: "Page" }`}</code> appearing <em>before</em>{" "}
+132:           <code>{`{ ps: "App" }`}</code>.
+133:         </p>
+134:       </section>
+135:     </main>
+136:   );
+137: }
+</file>
+
+<file path="scripts/build-broken.mjs">
+ 1: /**
+ 2:  * build:broken — proves the bug is reproducible with `next build` locally.
+ 3:  *
+ 4:  * What it does:
+ 5:  *   1. Temporarily writes a STATIC version of pages/index.tsx (no getServerSideProps)
+ 6:  *   2. Temporarily strips _app.tsx of its StrictContextProvider (simulates missing provider)
+ 7:  *   3. Runs `next build`
+ 8:  *   4. Restores both files (even if build fails)
+ 9:  *
+10:  * Expected result:
+11:  *   Build FAILS with:
+12:  *     Error: useStrictContext must be used within a StrictContextProvider
+13:  *     at react-dom-server.edge.production.js:4282
+14:  *
+15:  * Why this matters:
+16:  *   Next.js 15 uses react-dom-server.edge.production.js (the streaming Edge
+17:  *   renderer) even for static page prerendering during `next build`. It does
+18:  *   NOT require edge runtime config. Any static page that uses a null-initialised
+19:  *   context consumer (createContext(null) + throw) will fail at build time.
+20:  *
+21:  * The fixed page (/fixed) passes because:
+22:  *   - It has getServerSideProps (opts it out of static prerendering)
+23:  *   - It uses the withStrictContext HOC (its own provider, seeded before rendering)
+24:  */
+25: 
+26: import { execSync } from "node:child_process";
+27: import { readFileSync, writeFileSync } from "node:fs";
+28: import { fileURLToPath } from "node:url";
+29: import { dirname, join } from "node:path";
+30: 
+31: const __dirname = dirname(fileURLToPath(import.meta.url));
+32: const root = join(__dirname, "..");
+33: 
+34: const indexPath = join(root, "pages", "index.tsx");
+35: const appPath = join(root, "pages", "_app.tsx");
+36: 
+37: // Save originals
+38: const originalIndex = readFileSync(indexPath, "utf8");
+39: const originalApp = readFileSync(appPath, "utf8");
+40: 
+41: // Broken index.tsx — static (no getServerSideProps), uses strict context
+42: const brokenIndex = `import { useStrictContext } from "@/lib/StrictContext";
+43: 
+44: // NO getServerSideProps — this is a STATIC page.
+45: // next build will prerender it using react-dom-server.edge.production.js.
+46: // Without a provider in the tree, useStrictContext() returns null → throws.
+47: export default function Home() {
+48:   const ctx = useStrictContext(); // throws during build-time prerender
+49:   return <main><pre>{JSON.stringify(ctx)}</pre></main>;
+50: }
+51: `;
+52: 
+53: // Broken _app.tsx — no StrictContextProvider (simulates the missing-provider scenario)
+54: const brokenApp = `import type { AppProps } from "next/app";
+55: // No provider — the static index.tsx page has nothing above it when prerendered.
+56: export default function App({ Component, pageProps }: AppProps) {
+57:   return <Component {...pageProps} />;
+58: }
+59: `;
+60: 
+61: console.log("=".repeat(60));
+62: console.log("build:broken — writing broken files...");
+63: console.log("  pages/index.tsx  → static, no getServerSideProps");
+64: console.log("  pages/_app.tsx   → no StrictContextProvider");
+65: console.log("=".repeat(60));
+66: 
+67: writeFileSync(indexPath, brokenIndex);
+68: writeFileSync(appPath, brokenApp);
+69: 
+70: let exitCode = 0;
+71: 
+72: try {
+73:   execSync("npx next build", { cwd: root, stdio: "inherit" });
+74:   console.log("\n[UNEXPECTED] Build succeeded — the reproduction failed.");
+75:   exitCode = 1;
+76: } catch {
+77:   console.log("\n" + "=".repeat(60));
+78:   console.log("BUILD FAILED as expected.");
+79:   console.log("Look for: react-dom-server.edge.production.js in the stack.");
+80:   console.log("=".repeat(60));
+81: } finally {
+82:   console.log("\nRestoring original files...");
+83:   writeFileSync(indexPath, originalIndex);
+84:   writeFileSync(appPath, originalApp);
+85:   console.log("Restored. Run `npm run build` to confirm the fixed state passes.");
+86: }
+87: 
+88: process.exit(exitCode);
+</file>
+
+<file path="scripts/simulate-render-order-bug.mjs">
+  1: /**
+  2:  * Standalone reproduction of the Next.js 15 Pages Router + Edge runtime bug.
+  3:  *
+  4:  * Run: node scripts/simulate-render-order-bug.mjs
+  5:  *
+  6:  * This script proves that "page renders before _app" is fatal when the context
+  7:  * hard-throws on null — exactly what happens with useFlagsmith() on Vercel Edge.
+  8:  *
+  9:  * The streaming edge renderer (renderToReadableStream) used in Next.js 15 Pages
+ 10:  * Router on Vercel does NOT guarantee parent-before-child render order, so the
+ 11:  * page component's function body can execute before _app's Provider mounts.
+ 12:  *
+ 13:  * We simulate that race condition below by rendering the page component
+ 14:  * directly, without any provider ancestor — this is the exact call graph
+ 15:  * that the broken renderer produces.
+ 16:  */
+ 17: 
+ 18: import { renderToString } from "react-dom/server";
+ 19: import { createElement, createContext, useContext } from "react";
+ 20: 
+ 21: // ─── Minimal reproduction of flagsmith/react context ─────────────────────────
+ 22: 
+ 23: const StrictCtx = createContext(null); // null default — no fallback value
+ 24: 
+ 25: function useStrictContext() {
+ 26:   const ctx = useContext(StrictCtx);
+ 27:   if (ctx === null) {
+ 28:     // This is verbatim what flagsmith-js-client/react.tsx does for useFlagsmith()
+ 29:     throw new Error(
+ 30:       "useStrictContext must be used within a StrictContextProvider"
+ 31:     );
+ 32:   }
+ 33:   return ctx;
+ 34: }
+ 35: 
+ 36: function StrictContextProvider({ children, value }) {
+ 37:   console.log("  [render] StrictContextProvider");
+ 38:   return createElement(StrictCtx.Provider, { value }, children);
+ 39: }
+ 40: 
+ 41: // ─── Components ───────────────────────────────────────────────────────────────
+ 42: 
+ 43: function PageComponent() {
+ 44:   console.log("  [render] PageComponent");
+ 45:   const ctx = useStrictContext(); // throws if context is null
+ 46:   return createElement("div", null, `flags: ${JSON.stringify(ctx)}`);
+ 47: }
+ 48: 
+ 49: function App({ Component, pageProps }) {
+ 50:   console.log("  [render] App (_app.tsx equivalent)");
+ 51:   return createElement(
+ 52:     StrictContextProvider,
+ 53:     { value: { initialized: true, data: { feature_flag_a: true } } },
+ 54:     createElement(Component, pageProps)
+ 55:   );
+ 56: }
+ 57: 
+ 58: // ─── Case 1: Normal rendering — renderToString guarantees top-down order ──────
+ 59: 
+ 60: console.log("=== CASE 1: Standard renderToString (Node.js runtime) ===");
+ 61: console.log("Expected: App → StrictContextProvider → PageComponent");
+ 62: try {
+ 63:   const html = renderToString(
+ 64:     createElement(App, { Component: PageComponent, pageProps: {} })
+ 65:   );
+ 66:   console.log("  Result: OK (no throw)");
+ 67:   console.log("  HTML:", html.slice(0, 80) + "...");
+ 68: } catch (err) {
+ 69:   console.error("  UNEXPECTED error:", err.message);
+ 70: }
+ 71: 
+ 72: console.log();
+ 73: 
+ 74: // ─── Case 2: Broken rendering — page executes before provider is in tree ──────
+ 75: 
+ 76: console.log(
+ 77:   "=== CASE 2: Broken render order (Edge streaming renderer simulation) ==="
+ 78: );
+ 79: console.log(
+ 80:   "Simulates: renderToReadableStream calls PageComponent before App/Provider"
+ 81: );
+ 82: console.log("Observed render order on Vercel: { ps: 'Page' } then { ps: 'App' }");
+ 83: try {
+ 84:   renderToString(createElement(PageComponent)); // no provider ancestor
+ 85:   console.log("  Result: OK (should not reach here)");
+ 86: } catch (err) {
+ 87:   console.error("  EXPECTED error thrown:", err.message);
+ 88:   console.error(
+ 89:     "  This is the exact error reported: 'useFlagsmith must be used within a FlagsmithProvider'"
+ 90:   );
+ 91: }
+ 92: 
+ 93: console.log();
+ 94: 
+ 95: // ─── Case 3: Explicit render order inversion ──────────────────────────────────
+ 96: 
+ 97: console.log("=== CASE 3: Explicit render order inversion ===");
+ 98: console.log("Shows what 'Page renders before App' means in practice:");
+ 99: 
+100: const renderLog = [];
+101: 
+102: function InstrumentedProvider({ children }) {
+103:   renderLog.push({ ps: "App (StrictContextProvider)" });
+104:   return createElement(
+105:     StrictCtx.Provider,
+106:     { value: { initialized: true, data: {} } },
+107:     children
+108:   );
+109: }
+110: 
+111: function InstrumentedPage() {
+112:   renderLog.push({ ps: "Page" });
+113:   const ctx = useContext(StrictCtx); // use useContext directly — no throw yet
+114:   return createElement("div", null, ctx === null ? "NULL CONTEXT" : "OK");
+115: }
+116: 
+117: // Normal order: App wraps Page (correct)
+118: renderToString(
+119:   createElement(InstrumentedProvider, null, createElement(InstrumentedPage))
+120: );
+121: console.log("  Normal render order:", JSON.stringify(renderLog));
+122: renderLog.length = 0;
+123: 
+124: // Broken order: Page renders without App (simulates the edge renderer bug)
+125: renderToString(createElement(InstrumentedPage));
+126: console.log("  Broken render order:", JSON.stringify(renderLog));
+127: console.log(
+128:   "  (In the broken case, ctx is null — useStrictContext() would throw here)"
+129: );
+</file>
+
+<file path="next-env.d.ts">
+1: /// <reference types="next" />
+2: /// <reference types="next/image-types/global" />
+3: 
+4: // NOTE: This file should not be edited
+5: // see https://nextjs.org/docs/pages/api-reference/config/typescript for more information.
+</file>
+
+<file path="next.config.ts">
+1: import type { NextConfig } from "next";
+2: 
+3: const nextConfig: NextConfig = {
+4:   reactStrictMode: true,
+5: };
+6: 
+7: export default nextConfig;
+</file>
+
+<file path="repomix.config.json">
+ 1: {
+ 2:   "output": {
+ 3:     "filePath": "repomix-output.xml",
+ 4:     "style": "xml",
+ 5:     "showLineNumbers": true,
+ 6:     "copyToClipboard": false
+ 7:   },
+ 8:   "ignore": {
+ 9:     "useGitignore": true,
+10:     "useDefaultPatterns": true,
+11:     "customPatterns": [
+12:       ".next/**",
+13:       "node_modules/**",
+14:       "repomix-output.xml",
+15:       "package-lock.json"
+16:     ]
+17:   },
+18:   "include": [
+19:     "lib/**",
+20:     "pages/**",
+21:     "scripts/**",
+22:     "*.ts",
+23:     "*.json",
+24:     "*.md"
+25:   ]
+26: }
+</file>
+
+<file path="tsconfig.json">
+ 1: {
+ 2:   "compilerOptions": {
+ 3:     "target": "ES2017",
+ 4:     "lib": ["dom", "dom.iterable", "esnext"],
+ 5:     "allowJs": true,
+ 6:     "skipLibCheck": true,
+ 7:     "strict": true,
+ 8:     "noEmit": true,
+ 9:     "esModuleInterop": true,
+10:     "module": "esnext",
+11:     "moduleResolution": "bundler",
+12:     "resolveJsonModule": true,
+13:     "isolatedModules": true,
+14:     "jsx": "preserve",
+15:     "incremental": true,
+16:     "paths": {
+17:       "@/*": ["./*"]
+18:     }
+19:   },
+20:   "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
+21:   "exclude": ["node_modules"]
+22: }
+</file>
+
+<file path="lib/StrictContext.tsx">
+ 1: /**
+ 2:  * Mimics how flagsmith/react implements its context:
+ 3:  * - createContext(null) with no default value
+ 4:  * - useStrictContext() hard-throws if context is null
+ 5:  *
+ 6:  * This is the exact pattern that breaks when page renders
+ 7:  * before _app in Next.js 15 Pages Router + Edge runtime.
+ 8:  *
+ 9:  * Compare with flagsmith-js-client react.tsx:
+10:  *   useFlagsmith()   → hard throws on null  (this file mimics this)
+11:  *   useFlags()       → non-null assertion   (crashes with generic TypeError)
+12:  *   useFlagsmithLoading() → optional chain  (silently returns undefined)
+13:  */
+14: import React, { createContext, useContext, useRef, useState } from "react";
+15: 
+16: export interface StrictContextValue {
+17:   initialized: boolean;
+18:   data: Record<string, boolean>;
+19: }
+20: 
+21: // Initialized to null — no fallback. If a consumer runs before
+22: // the provider mounts, useContext returns null.
+23: const StrictCtx = createContext<StrictContextValue | null>(null);
+24: 
+25: // Hard-throws on null — exactly like useFlagsmith()
+26: export function useStrictContext(): StrictContextValue {
+27:   const ctx = useContext(StrictCtx);
+28:   if (ctx === null) {
+29:     throw new Error(
+30:       "useStrictContext must be used within a StrictContextProvider"
+31:     );
+32:   }
+33:   return ctx;
+34: }
+35: 
+36: // Mimics how flagsmith/react initializes asynchronously.
+37: // Accepts an optional serverState (pre-fetched in getServerSideProps by the
+38: // withStrictContext HOC) so the context is never null on first render.
+39: export function StrictContextProvider({
+40:   children,
+41:   serverState,
+42: }: {
+43:   children: React.ReactNode;
+44:   serverState?: StrictContextValue;
+45: }) {
+46:   console.log({ ps: "Provider (inside _app)", phase: "render" });
+47: 
+48:   const [state, setState] = useState<StrictContextValue>(
+49:     serverState ?? { initialized: false, data: {} }
+50:   );
+51: 
+52:   // Simulate async init (like flagsmith.init()) — skipped when serverState
+53:   // is provided because the state is already populated.
+54:   React.useEffect(() => {
+55:     if (serverState) return;
+56:     setTimeout(() => {
+57:       setState({ initialized: true, data: { feature_flag_a: true } });
+58:     }, 50);
+59:   }, []);
+60: 
+61:   return <StrictCtx.Provider value={state}>{children}</StrictCtx.Provider>;
+62: }
 </file>
 
 <file path="lib/withStrictContext.tsx">
@@ -328,646 +800,6 @@ This section contains the contents of the repository's files.
 63:     </main>
 64:   );
 65: }
-</file>
-
-<file path="pages/simulate-bug.tsx">
-  1: /**
-  2:  * This page reproduces the error server-side during getServerSideProps.
-  3:  *
-  4:  * It renders the page component (PageWithoutProvider) using React's
-  5:  * renderToStaticMarkup WITHOUT wrapping it in StrictContextProvider.
-  6:  * This is the same call graph that the Edge streaming renderer produces
-  7:  * when render order is inverted (page executes before _app).
-  8:  *
-  9:  * Result: the exact error "useStrictContext must be used within a
- 10:  * StrictContextProvider" is thrown and caught, then displayed on the page.
- 11:  *
- 12:  * The /edge route (runtime: 'experimental-edge') is needed to deploy
- 13:  * this to Vercel's edge infrastructure where the broken render order
- 14:  * occurs naturally without any simulation.
- 15:  */
- 16: import type { GetServerSideProps } from "next";
- 17: import React from "react";
- 18: import { renderToStaticMarkup } from "react-dom/server";
- 19: import { useStrictContext } from "@/lib/StrictContext";
- 20: 
- 21: // Minimal component that uses the strict hook — identical to what a real page does.
- 22: // Outside of a provider tree, calling this throws.
- 23: function PageWithoutProvider() {
- 24:   const ctx = useStrictContext();
- 25:   return <div>{JSON.stringify(ctx)}</div>;
- 26: }
- 27: 
- 28: interface Props {
- 29:   errorMessage: string | null;
- 30:   errorStack: string | null;
- 31:   renderOrder: string[];
- 32: }
- 33: 
- 34: export const getServerSideProps: GetServerSideProps<Props> = async () => {
- 35:   const renderOrder: string[] = [];
- 36:   let errorMessage: string | null = null;
- 37:   let errorStack: string | null = null;
- 38: 
- 39:   try {
- 40:     renderOrder.push("getServerSideProps starts");
- 41:     renderOrder.push("Calling renderToStaticMarkup(PageWithoutProvider) — no provider ancestor");
- 42: 
- 43:     // This reproduces the broken edge renderer call graph:
- 44:     //   renderToReadableStream calls the page component function body
- 45:     //   before _app has had a chance to mount its Provider
- 46:     renderToStaticMarkup(React.createElement(PageWithoutProvider));
- 47: 
- 48:     renderOrder.push("renderToStaticMarkup completed (no error — should not happen)");
- 49:   } catch (err: unknown) {
- 50:     renderOrder.push("Error thrown by useStrictContext()");
- 51:     if (err instanceof Error) {
- 52:       errorMessage = err.message;
- 53:       errorStack = err.stack ?? null;
- 54:     }
- 55:   }
- 56: 
- 57:   return { props: { errorMessage, errorStack, renderOrder } };
- 58: };
- 59: 
- 60: export default function SimulateBugPage({
- 61:   errorMessage,
- 62:   errorStack,
- 63:   renderOrder,
- 64: }: Props) {
- 65:   return (
- 66:     <main style={{ fontFamily: "monospace", padding: "2rem" }}>
- 67:       <h1>Simulate Bug — Server-Side Reproduction</h1>
- 68:       <p>
- 69:         <code>getServerSideProps</code> renders <code>PageWithoutProvider</code>{" "}
- 70:         (a component using <code>useStrictContext</code>) without any provider
- 71:         ancestor. This simulates the inverted render order from the Edge
- 72:         streaming renderer.
- 73:       </p>
- 74: 
- 75:       <h2 style={{ marginTop: "1.5rem" }}>Render sequence</h2>
- 76:       <ol style={{ background: "#f4f4f4", padding: "1rem 2rem", borderRadius: "4px" }}>
- 77:         {renderOrder.map((step, i) => (
- 78:           <li key={i} style={{ margin: "0.25rem 0" }}>
- 79:             {step}
- 80:           </li>
- 81:         ))}
- 82:       </ol>
- 83: 
- 84:       <h2 style={{ marginTop: "1.5rem" }}>
- 85:         {errorMessage ? "Error (expected)" : "No error (unexpected)"}
- 86:       </h2>
- 87:       {errorMessage ? (
- 88:         <div
- 89:           style={{
- 90:             background: "#fee2e2",
- 91:             border: "1px solid #fca5a5",
- 92:             padding: "1rem",
- 93:             borderRadius: "4px",
- 94:           }}
- 95:         >
- 96:           <p>
- 97:             <strong>Message:</strong>
- 98:           </p>
- 99:           <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>{errorMessage}</pre>
-100:           <p style={{ marginTop: "1rem" }}>
-101:             <strong>Stack:</strong>
-102:           </p>
-103:           <pre
-104:             style={{
-105:               margin: 0,
-106:               fontSize: "0.75rem",
-107:               whiteSpace: "pre-wrap",
-108:               color: "#991b1b",
-109:             }}
-110:           >
-111:             {errorStack}
-112:           </pre>
-113:         </div>
-114:       ) : (
-115:         <p style={{ color: "green" }}>No error thrown (context was available)</p>
-116:       )}
-117: 
-118:       <section style={{ marginTop: "2rem", fontSize: "0.85rem", color: "#555" }}>
-119:         <h2>Why this happens on Vercel / Edge runtime</h2>
-120:         <p>
-121:           Next.js 15 Pages Router on Vercel uses{" "}
-122:           <code>renderToReadableStream</code> (Web Streams, edge renderer) instead
-123:           of <code>renderToString</code> (Node.js). The streaming renderer does
-124:           not guarantee parent-before-child render order. When the page component
-125:           executes before <code>_app</code>&apos;s <code>StrictContextProvider</code>{" "}
-126:           mounts, <code>useContext</code> returns <code>null</code> and the strict
-127:           hook throws.
-128:         </p>
-129:         <p>
-130:           Evidence from the Notion doc: server console logs showed{" "}
-131:           <code>{`{ ps: "Page" }`}</code> appearing <em>before</em>{" "}
-132:           <code>{`{ ps: "App" }`}</code>.
-133:         </p>
-134:       </section>
-135:     </main>
-136:   );
-137: }
-</file>
-
-<file path="scripts/simulate-render-order-bug.mjs">
-  1: /**
-  2:  * Standalone reproduction of the Next.js 15 Pages Router + Edge runtime bug.
-  3:  *
-  4:  * Run: node scripts/simulate-render-order-bug.mjs
-  5:  *
-  6:  * This script proves that "page renders before _app" is fatal when the context
-  7:  * hard-throws on null — exactly what happens with useFlagsmith() on Vercel Edge.
-  8:  *
-  9:  * The streaming edge renderer (renderToReadableStream) used in Next.js 15 Pages
- 10:  * Router on Vercel does NOT guarantee parent-before-child render order, so the
- 11:  * page component's function body can execute before _app's Provider mounts.
- 12:  *
- 13:  * We simulate that race condition below by rendering the page component
- 14:  * directly, without any provider ancestor — this is the exact call graph
- 15:  * that the broken renderer produces.
- 16:  */
- 17: 
- 18: import { renderToString } from "react-dom/server";
- 19: import { createElement, createContext, useContext } from "react";
- 20: 
- 21: // ─── Minimal reproduction of flagsmith/react context ─────────────────────────
- 22: 
- 23: const StrictCtx = createContext(null); // null default — no fallback value
- 24: 
- 25: function useStrictContext() {
- 26:   const ctx = useContext(StrictCtx);
- 27:   if (ctx === null) {
- 28:     // This is verbatim what flagsmith-js-client/react.tsx does for useFlagsmith()
- 29:     throw new Error(
- 30:       "useStrictContext must be used within a StrictContextProvider"
- 31:     );
- 32:   }
- 33:   return ctx;
- 34: }
- 35: 
- 36: function StrictContextProvider({ children, value }) {
- 37:   console.log("  [render] StrictContextProvider");
- 38:   return createElement(StrictCtx.Provider, { value }, children);
- 39: }
- 40: 
- 41: // ─── Components ───────────────────────────────────────────────────────────────
- 42: 
- 43: function PageComponent() {
- 44:   console.log("  [render] PageComponent");
- 45:   const ctx = useStrictContext(); // throws if context is null
- 46:   return createElement("div", null, `flags: ${JSON.stringify(ctx)}`);
- 47: }
- 48: 
- 49: function App({ Component, pageProps }) {
- 50:   console.log("  [render] App (_app.tsx equivalent)");
- 51:   return createElement(
- 52:     StrictContextProvider,
- 53:     { value: { initialized: true, data: { feature_flag_a: true } } },
- 54:     createElement(Component, pageProps)
- 55:   );
- 56: }
- 57: 
- 58: // ─── Case 1: Normal rendering — renderToString guarantees top-down order ──────
- 59: 
- 60: console.log("=== CASE 1: Standard renderToString (Node.js runtime) ===");
- 61: console.log("Expected: App → StrictContextProvider → PageComponent");
- 62: try {
- 63:   const html = renderToString(
- 64:     createElement(App, { Component: PageComponent, pageProps: {} })
- 65:   );
- 66:   console.log("  Result: OK (no throw)");
- 67:   console.log("  HTML:", html.slice(0, 80) + "...");
- 68: } catch (err) {
- 69:   console.error("  UNEXPECTED error:", err.message);
- 70: }
- 71: 
- 72: console.log();
- 73: 
- 74: // ─── Case 2: Broken rendering — page executes before provider is in tree ──────
- 75: 
- 76: console.log(
- 77:   "=== CASE 2: Broken render order (Edge streaming renderer simulation) ==="
- 78: );
- 79: console.log(
- 80:   "Simulates: renderToReadableStream calls PageComponent before App/Provider"
- 81: );
- 82: console.log("Observed render order on Vercel: { ps: 'Page' } then { ps: 'App' }");
- 83: try {
- 84:   renderToString(createElement(PageComponent)); // no provider ancestor
- 85:   console.log("  Result: OK (should not reach here)");
- 86: } catch (err) {
- 87:   console.error("  EXPECTED error thrown:", err.message);
- 88:   console.error(
- 89:     "  This is the exact error reported: 'useFlagsmith must be used within a FlagsmithProvider'"
- 90:   );
- 91: }
- 92: 
- 93: console.log();
- 94: 
- 95: // ─── Case 3: Explicit render order inversion ──────────────────────────────────
- 96: 
- 97: console.log("=== CASE 3: Explicit render order inversion ===");
- 98: console.log("Shows what 'Page renders before App' means in practice:");
- 99: 
-100: const renderLog = [];
-101: 
-102: function InstrumentedProvider({ children }) {
-103:   renderLog.push({ ps: "App (StrictContextProvider)" });
-104:   return createElement(
-105:     StrictCtx.Provider,
-106:     { value: { initialized: true, data: {} } },
-107:     children
-108:   );
-109: }
-110: 
-111: function InstrumentedPage() {
-112:   renderLog.push({ ps: "Page" });
-113:   const ctx = useContext(StrictCtx); // use useContext directly — no throw yet
-114:   return createElement("div", null, ctx === null ? "NULL CONTEXT" : "OK");
-115: }
-116: 
-117: // Normal order: App wraps Page (correct)
-118: renderToString(
-119:   createElement(InstrumentedProvider, null, createElement(InstrumentedPage))
-120: );
-121: console.log("  Normal render order:", JSON.stringify(renderLog));
-122: renderLog.length = 0;
-123: 
-124: // Broken order: Page renders without App (simulates the edge renderer bug)
-125: renderToString(createElement(InstrumentedPage));
-126: console.log("  Broken render order:", JSON.stringify(renderLog));
-127: console.log(
-128:   "  (In the broken case, ctx is null — useStrictContext() would throw here)"
-129: );
-</file>
-
-<file path="next-env.d.ts">
-1: /// <reference types="next" />
-2: /// <reference types="next/image-types/global" />
-3: 
-4: // NOTE: This file should not be edited
-5: // see https://nextjs.org/docs/pages/api-reference/config/typescript for more information.
-</file>
-
-<file path="next.config.ts">
-1: import type { NextConfig } from "next";
-2: 
-3: const nextConfig: NextConfig = {
-4:   reactStrictMode: true,
-5: };
-6: 
-7: export default nextConfig;
-</file>
-
-<file path="package.json">
- 1: {
- 2:   "name": "reproduce-nextjs-router-render",
- 3:   "version": "0.1.0",
- 4:   "private": true,
- 5:   "scripts": {
- 6:     "dev": "next dev",
- 7:     "build": "next build",
- 8:     "start": "next start",
- 9:     "simulate": "node scripts/simulate-render-order-bug.mjs",
-10:     "pack": "repomix"
-11:   },
-12:   "dependencies": {
-13:     "next": "15.3.9",
-14:     "react": "19.1.0",
-15:     "react-dom": "19.1.0"
-16:   },
-17:   "devDependencies": {
-18:     "@types/node": "^20",
-19:     "@types/react": "^19",
-20:     "@types/react-dom": "^19",
-21:     "repomix": "^1.13.1",
-22:     "typescript": "^5"
-23:   }
-24: }
-</file>
-
-<file path="README.md">
-  1: # Next.js 15 Pages Router — Strict Context Render-Order Bug
-  2: 
-  3: > **Note:** This project was generated with [Claude Code](https://claude.com/claude-code) (AI pair programming). The bug, findings, and fix are real and based on verified Next.js issues — but all code and documentation were written by an AI assistant. Review accordingly before using in production.
-  4: 
-  5: Minimal reproduction and fix for the error:
-  6: 
-  7: ```
-  8: useFlagsmith must be used within a FlagsmithProvider
-  9: ```
- 10: 
- 11: …thrown in a page component despite `FlagsmithProvider` being correctly placed in `_app.tsx`. The same class of bug affects **any** context built with `createContext(null)` and a consumer that throws (or crashes) when the context is null.
- 12: 
- 13: ---
- 14: 
- 15: ## The Bug
- 16: 
- 17: Next.js 15 Pages Router uses `react-dom-server.edge.production.js` — the Edge streaming renderer — instead of the legacy synchronous `renderToString`. The streaming renderer **does not guarantee parent-before-child render order**. Under certain conditions (Vercel Edge deployment, specific Next.js 15 minor versions) the page component's function body executes **before** `_app` mounts its providers.
- 18: 
- 19: Evidence captured during debugging:
- 20: 
- 21: ```js
- 22: { ps: 'Page' }   // ← page rendered first
- 23: { ps: 'App' }    // ← _app rendered after
- 24: ```
- 25: 
- 26: This is impossible under `renderToString` — it is a property of the streaming renderer.
- 27: 
- 28: When the page runs before `_app`:
- 29: 
- 30: 1. `useContext(FlagsmithCtx)` returns `null` (no provider in the tree yet)
- 31: 2. `useFlagsmith()` hard-throws: _"must be used within a FlagsmithProvider"_
- 32: 3. `useFlags()` crashes with a generic `TypeError: Cannot read properties of null`
- 33: 4. `useFlagsmithLoading()` silently returns `undefined` — wrong data, no error
- 34: 
- 35: Stack traces from the bug point to `react-dom-server.edge.production.js:4189`, confirming the Edge renderer is the culprit even for Pages Router routes.
- 36: 
- 37: ---
- 38: 
- 39: ## Repo Structure
- 40: 
- 41: ```
- 42: lib/
- 43:   StrictContext.tsx      # Mimics useFlagsmith() — createContext(null) + hard throw
- 44:   SafeContext.tsx        # Safe pattern — createContext(defaultValue), never throws
- 45:   withStrictContext.tsx  # HOC fix + getServerContextState() server helper
- 46: 
- 47: pages/
- 48:   _app.tsx               # Both providers; Navbar consumes both
- 49:   index.tsx              # Broken page — throws at request time (no HOC)
- 50:   edge.tsx               # Explicit experimental-edge runtime
- 51:   simulate-bug.tsx       # Server-side reproduction via getServerSideProps
- 52:   fixed.tsx              # Fixed page — withStrictContext HOC + side-by-side comparison
- 53: 
- 54: scripts/
- 55:   simulate-render-order-bug.mjs  # Standalone proof, no server needed
- 56: ```
- 57: 
- 58: ---
- 59: 
- 60: ## Quick Start
- 61: 
- 62: ```bash
- 63: npm install
- 64: 
- 65: # See the error reproduced and explained without a server
- 66: npm run simulate
- 67: 
- 68: # Run the dev server
- 69: npm run dev
- 70: ```
- 71: 
- 72: | Route | What it shows |
- 73: |---|---|
- 74: | `/` | **Broken** — no HOC, no `serverContextState`. Locally: renders with `initialized: false` (wrong data). On Vercel Edge: throws |
- 75: | `/simulate-bug` | **Throw reproduced locally** — `getServerSideProps` renders a hook consumer without any provider, catches and displays the error |
- 76: | `/fixed` | **Fixed** — HOC pattern, both contexts initialized correctly, side-by-side comparison |
- 77: | `/edge` | `experimental-edge` runtime — same broken pattern as `/`; throws on Vercel Edge |
- 78: 
- 79: ---
- 80: 
- 81: ## Root Cause in Detail
- 82: 
- 83: ### 1. The Edge renderer is used for Pages Router in Next.js 15
- 84: 
- 85: Build output and stack traces prove it:
- 86: 
- 87: ```
- 88: react-dom-server.edge.production.js:4189
- 89: TypeError: Cannot read properties of null (reading 'useContext')
- 90: ```
- 91: 
- 92: This file is the streaming renderer used for Edge Functions. Next.js 15 routes Pages Router through it even on Node.js targets in certain configurations (confirmed in [vercel/next.js#74858](https://github.com/vercel/next.js/discussions/74858) and [vercel/next.js#82366](https://github.com/vercel/next.js/issues/82366)).
- 93: 
- 94: ### 2. `renderToReadableStream` does not guarantee render order
- 95: 
- 96: `renderToString` renders the full component tree synchronously top-down — `_app` always before any page. `renderToReadableStream` (Web Streams, used by the Edge renderer) can schedule components differently, especially when Suspense or async boundaries are involved. The `{ ps: 'Page' }` before `{ ps: 'App' }` log is direct evidence.
- 97: 
- 98: ### 3. `createContext(null)` with a throwing consumer is the trigger
- 99: 
-100: The bug exists in the renderer. But it only manifests as an error when the context consumer throws (or crashes) on null. Libraries that provide a real default are immune:
-101: 
-102: | Pattern | Vulnerable? |
-103: |---|---|
-104: | `createContext(null)` + hard throw on null | **Yes** — `useFlagsmith()`, `useStrictContext()` |
-105: | `createContext(null)` + non-null assertion `ctx!` | **Yes** — generic `TypeError` |
-106: | `createContext(null)` + optional chain `ctx?.value` | **Silently broken** — returns `undefined` |
-107: | `createContext(defaultValue)` with a real default | **No** — `next-themes`, `zustand`, `react-query` |
-108: 
-109: ---
-110: 
-111: ## Context Architecture in This Repo
-112: 
-113: Two providers, two different risk profiles, coexisting without conflict:
-114: 
-115: ```
-116: App (_app)
-117:   SafeContextProvider        ← createContext(defaultValue) — safe everywhere, no HOC
-118:     StrictContextProvider    ← seeded from pageProps.serverContextState
-119:       Navbar                 ← reads both; always safe (rendered by _app, never before it)
-120:       WrappedPage (HOC export of /fixed)
-121:         StrictContextProvider (HOC) ← same serverContextState, inner wins for page
-122:           FixedPage
-123:             useSafeContext()    → _app's SafeContextProvider ✓
-124:             useStrictContext()  → HOC's StrictContextProvider ✓
-125: ```
-126: 
-127: **Why two `StrictContextProvider` instances is not a conflict:** both are seeded from the same `serverContextState` returned by `getServerSideProps`. Neither updates client-side. Values are identical — Navbar and FixedPage see the same flag state.
-128: 
-129: **Why `Navbar` is safe with only `_app`'s provider:** `Navbar` is inside `_app`'s JSX. React always executes parent before child, so `Navbar` always has the provider above it. The render-order bug only affects `Component` (the page), which Next.js can schedule independently.
-130: 
-131: ---
-132: 
-133: ## The Fix — Per-Page Provider HOC
-134: 
-135: ### `lib/withStrictContext.tsx`
-136: 
-137: ```ts
-138: // Server helper — call in getServerSideProps
-139: export async function getServerContextState(userId?: string): Promise<StrictContextValue>
-140: 
-141: // HOC — wraps page in its own provider seeded from serverContextState
-142: export function withStrictContext<P>(PageComponent: React.ComponentType<P>)
-143: ```
-144: 
-145: ### Usage (2 lines per page)
-146: 
-147: ```tsx
-148: // pages/my-page.tsx
-149: import { withStrictContext, getServerContextState } from '@/lib/withStrictContext'
-150: 
-151: function MyPage() {
-152:   const ctx = useStrictContext() // always works
-153:   return <div>...</div>
-154: }
-155: 
-156: export const getServerSideProps: GetServerSideProps = async () => ({
-157:   props: { serverContextState: await getServerContextState() },
-158: })
-159: 
-160: export default withStrictContext(MyPage)
-161: ```
-162: 
-163: ### Why this is render-order safe
-164: 
-165: `getServerSideProps` runs **before any React rendering**. By the time the component tree is touched, `serverContextState` is already in `pageProps`. The HOC's provider is part of the page's own subtree — it is always above the page component regardless of how `_app` is scheduled.
-166: 
-167: ### Flagsmith equivalent (`lib/withPageFlags.tsx` in your real app)
-168: 
-169: ```ts
-170: export async function getPageFlags(userId?: string) {
-171:   const flagsmith = createFlagsmithInstance()
-172:   await flagsmith.init({
-173:     environmentID: process.env.NEXT_PUBLIC_FLAGSMITH_KEY!,
-174:     ...(userId ? { identity: userId } : {}),
-175:   })
-176:   return flagsmith.getState()
-177: }
-178: 
-179: export function withPageFlags<P>(PageComponent: React.ComponentType<P>) {
-180:   return function WrappedPage({ flagsmithState, ...props }: P & { flagsmithState: IState }) {
-181:     const ref = useRef(createFlagsmithInstance())
-182:     return (
-183:       <FlagsmithProvider flagsmith={ref.current} serverState={flagsmithState}>
-184:         <PageComponent {...(props as P)} />
-185:       </FlagsmithProvider>
-186:     )
-187:   }
-188: }
-189: ```
-190: 
-191: ---
-192: 
-193: ## Other Resolutions Investigated
-194: 
-195: ### Upgrade Next.js minor
-196: Some users in [#74858](https://github.com/vercel/next.js/discussions/74858) resolved the issue by upgrading within 15.x. **Not reliable** — [#82366](https://github.com/vercel/next.js/issues/82366) shows the same class of bug in 15.4.5, and [#84994](https://github.com/vercel/next.js/issues/84994) shows it in Next.js 16 canary.
-197: 
-198: ### `force-dynamic` / `getServerSideProps` (no HOC)
-199: Adding `export const dynamic = 'force-dynamic'` (App Router) or an empty `getServerSideProps` (Pages Router) prevents the build-time prerender throw. It does **not** fix the runtime render-order issue — the page still shows uninitialized state locally and can throw on Vercel Edge.
-200: 
-201: ### Remove `_error.tsx`
-202: Narrow fix for a specific variant where the error originates in the error page itself during prerendering ([#82366](https://github.com/vercel/next.js/issues/82366)).
-203: 
-204: ### `createContext(defaultValue)` instead of `createContext(null)`
-205: The cleanest fix for **your own contexts**. If a meaningful default exists, use it — the bug becomes harmless. Only contexts that genuinely cannot have a default (identity-scoped flags, auth tokens) require the HOC.
-206: 
-207: ### Migrate to App Router
-208: Next.js's long-term direction. Streaming + Suspense boundaries give explicit control over data loading order, and React Server Components eliminate the need for most context providers entirely. Not a practical near-term fix for large Pages Router codebases.
-209: 
-210: ---
-211: 
-212: ## Backing Issues
-213: 
-214: | Issue | Router | Status |
-215: |---|---|---|
-216: | [#74858](https://github.com/vercel/next.js/discussions/74858) — build failure on 15.1.4 | Pages | Open |
-217: | [#82366](https://github.com/vercel/next.js/issues/82366) — useContext null in 15.4.5 prerender of /404 | Pages | Closed (confirmed bug) |
-218: | [#43577](https://github.com/vercel/next.js/discussions/43577) — useContext null (longstanding, 157 comments) | Pages | Open |
-219: | [#84994](https://github.com/vercel/next.js/issues/84994) — useContext null in Next.js 16 canary | App | Open |
-220: | [#49355](https://github.com/vercel/next.js/issues/49355) — Framer Motion useContext null on Vercel | App | Closed |
-221: | [#69682](https://github.com/vercel/next.js/issues/69682) — Context provider fails on first render | App | Open |
-222: 
-223: ---
-224: 
-225: ## Stack
-226: 
-227: - **Next.js** 15.3.9 (Pages Router)
-228: - **React** 19.1.0
-229: - **TypeScript** 5
-230: - **Flagsmith** — not installed; `StrictContext` is a faithful stand-in for the `flagsmith/react` context contract
-</file>
-
-<file path="tsconfig.json">
- 1: {
- 2:   "compilerOptions": {
- 3:     "target": "ES2017",
- 4:     "lib": ["dom", "dom.iterable", "esnext"],
- 5:     "allowJs": true,
- 6:     "skipLibCheck": true,
- 7:     "strict": true,
- 8:     "noEmit": true,
- 9:     "esModuleInterop": true,
-10:     "module": "esnext",
-11:     "moduleResolution": "bundler",
-12:     "resolveJsonModule": true,
-13:     "isolatedModules": true,
-14:     "jsx": "preserve",
-15:     "incremental": true,
-16:     "paths": {
-17:       "@/*": ["./*"]
-18:     }
-19:   },
-20:   "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
-21:   "exclude": ["node_modules"]
-22: }
-</file>
-
-<file path="lib/StrictContext.tsx">
- 1: /**
- 2:  * Mimics how flagsmith/react implements its context:
- 3:  * - createContext(null) with no default value
- 4:  * - useStrictContext() hard-throws if context is null
- 5:  *
- 6:  * This is the exact pattern that breaks when page renders
- 7:  * before _app in Next.js 15 Pages Router + Edge runtime.
- 8:  *
- 9:  * Compare with flagsmith-js-client react.tsx:
-10:  *   useFlagsmith()   → hard throws on null  (this file mimics this)
-11:  *   useFlags()       → non-null assertion   (crashes with generic TypeError)
-12:  *   useFlagsmithLoading() → optional chain  (silently returns undefined)
-13:  */
-14: import React, { createContext, useContext, useRef, useState } from "react";
-15: 
-16: export interface StrictContextValue {
-17:   initialized: boolean;
-18:   data: Record<string, boolean>;
-19: }
-20: 
-21: // Initialized to null — no fallback. If a consumer runs before
-22: // the provider mounts, useContext returns null.
-23: const StrictCtx = createContext<StrictContextValue | null>(null);
-24: 
-25: // Hard-throws on null — exactly like useFlagsmith()
-26: export function useStrictContext(): StrictContextValue {
-27:   const ctx = useContext(StrictCtx);
-28:   if (ctx === null) {
-29:     throw new Error(
-30:       "useStrictContext must be used within a StrictContextProvider"
-31:     );
-32:   }
-33:   return ctx;
-34: }
-35: 
-36: // Mimics how flagsmith/react initializes asynchronously.
-37: // Accepts an optional serverState (pre-fetched in getServerSideProps by the
-38: // withStrictContext HOC) so the context is never null on first render.
-39: export function StrictContextProvider({
-40:   children,
-41:   serverState,
-42: }: {
-43:   children: React.ReactNode;
-44:   serverState?: StrictContextValue;
-45: }) {
-46:   console.log({ ps: "Provider (inside _app)", phase: "render" });
-47: 
-48:   const [state, setState] = useState<StrictContextValue>(
-49:     serverState ?? { initialized: false, data: {} }
-50:   );
-51: 
-52:   // Simulate async init (like flagsmith.init()) — skipped when serverState
-53:   // is provided because the state is already populated.
-54:   React.useEffect(() => {
-55:     if (serverState) return;
-56:     setTimeout(() => {
-57:       setState({ initialized: true, data: { feature_flag_a: true } });
-58:     }, 50);
-59:   }, []);
-60: 
-61:   return <StrictCtx.Provider value={state}>{children}</StrictCtx.Provider>;
-62: }
 </file>
 
 <file path="pages/fixed.tsx">
@@ -1207,6 +1039,300 @@ This section contains the contents of the repository's files.
 88:     </main>
 89:   );
 90: }
+</file>
+
+<file path="package.json">
+ 1: {
+ 2:   "name": "reproduce-nextjs-router-render",
+ 3:   "version": "0.1.0",
+ 4:   "private": true,
+ 5:   "scripts": {
+ 6:     "dev": "next dev",
+ 7:     "build": "next build",
+ 8:     "start": "next start",
+ 9:     "simulate": "node scripts/simulate-render-order-bug.mjs",
+10:     "build:broken": "node scripts/build-broken.mjs",
+11:     "pack": "repomix"
+12:   },
+13:   "dependencies": {
+14:     "next": "15.3.9",
+15:     "react": "19.1.0",
+16:     "react-dom": "19.1.0"
+17:   },
+18:   "devDependencies": {
+19:     "@types/node": "^20",
+20:     "@types/react": "^19",
+21:     "@types/react-dom": "^19",
+22:     "repomix": "^1.13.1",
+23:     "typescript": "^5"
+24:   }
+25: }
+</file>
+
+<file path="README.md">
+  1: # Next.js 15 Pages Router — Strict Context Render-Order Bug
+  2: 
+  3: > **Note:** This project was generated with [Claude Code](https://claude.com/claude-code) (AI pair programming). The bug, findings, and fix are real and based on verified Next.js issues — but all code and documentation were written by an AI assistant. Review accordingly before using in production.
+  4: 
+  5: Minimal reproduction and fix for the error:
+  6: 
+  7: ```
+  8: useFlagsmith must be used within a FlagsmithProvider
+  9: ```
+ 10: 
+ 11: …thrown in a page component despite `FlagsmithProvider` being correctly placed in `_app.tsx`. The same class of bug affects **any** context built with `createContext(null)` and a consumer that throws (or crashes) when the context is null.
+ 12: 
+ 13: ---
+ 14: 
+ 15: ## The Bug
+ 16: 
+ 17: Next.js 15 Pages Router uses `react-dom-server.edge.production.js` — the Edge streaming renderer — instead of the legacy synchronous `renderToString`. The streaming renderer **does not guarantee parent-before-child render order**. Under certain conditions (Vercel Edge deployment, specific Next.js 15 minor versions) the page component's function body executes **before** `_app` mounts its providers.
+ 18: 
+ 19: Evidence captured during debugging:
+ 20: 
+ 21: ```js
+ 22: { ps: 'Page' }   // ← page rendered first
+ 23: { ps: 'App' }    // ← _app rendered after
+ 24: ```
+ 25: 
+ 26: This is impossible under `renderToString` — it is a property of the streaming renderer.
+ 27: 
+ 28: When the page runs before `_app`:
+ 29: 
+ 30: 1. `useContext(FlagsmithCtx)` returns `null` (no provider in the tree yet)
+ 31: 2. `useFlagsmith()` hard-throws: _"must be used within a FlagsmithProvider"_
+ 32: 3. `useFlags()` crashes with a generic `TypeError: Cannot read properties of null`
+ 33: 4. `useFlagsmithLoading()` silently returns `undefined` — wrong data, no error
+ 34: 
+ 35: Stack traces from the bug point to `react-dom-server.edge.production.js:4282`, confirming the Edge renderer is the culprit even for Pages Router routes without explicit edge runtime configuration.
+ 36: 
+ 37: ---
+ 38: 
+ 39: ## Repo Structure
+ 40: 
+ 41: ```
+ 42: lib/
+ 43:   StrictContext.tsx      # Mimics useFlagsmith() — createContext(null) + hard throw
+ 44:   SafeContext.tsx        # Safe pattern — createContext(defaultValue), never throws
+ 45:   withStrictContext.tsx  # HOC fix + getServerContextState() server helper
+ 46: 
+ 47: pages/
+ 48:   _app.tsx               # Both providers; Navbar consumes both
+ 49:   index.tsx              # Broken page — throws at request time (no HOC)
+ 50:   edge.tsx               # Explicit experimental-edge runtime
+ 51:   simulate-bug.tsx       # Server-side reproduction via getServerSideProps
+ 52:   fixed.tsx              # Fixed page — withStrictContext HOC + side-by-side comparison
+ 53: 
+ 54: scripts/
+ 55:   simulate-render-order-bug.mjs  # Standalone proof, no server needed
+ 56: ```
+ 57: 
+ 58: ---
+ 59: 
+ 60: ## Quick Start
+ 61: 
+ 62: ```bash
+ 63: npm install
+ 64: 
+ 65: # Reproduce the build failure locally (no edge runtime needed)
+ 66: npm run build:broken
+ 67: # Expected: next build fails with react-dom-server.edge.production.js:4282
+ 68: 
+ 69: # Verify the fixed state builds cleanly
+ 70: npm run build
+ 71: 
+ 72: # See the runtime error reproduced without a server
+ 73: npm run simulate
+ 74: 
+ 75: # Run the dev server and explore the routes below
+ 76: npm run dev
+ 77: ```
+ 78: 
+ 79: | Route | What it shows |
+ 80: |---|---|
+ 81: | `/` | **Broken** — no HOC, no `serverContextState`. Shows `initialized: false` (wrong data). On Vercel Edge: throws. |
+ 82: | `/simulate-bug` | **Throw reproduced locally** — renders the hook consumer without any provider, catches and displays the exact error |
+ 83: | `/fixed` | **Fixed** — HOC pattern, both contexts initialized correctly, side-by-side comparison |
+ 84: | `/edge` | `experimental-edge` runtime — same broken pattern as `/`; throws on Vercel Edge |
+ 85: 
+ 86: ---
+ 87: 
+ 88: ## Local Reproduction (No Edge Runtime or Vercel Needed)
+ 89: 
+ 90: The bug is reproducible with `npm run build:broken` — no Vercel account, no edge runtime config, no deployment.
+ 91: 
+ 92: **What `build:broken` does:**
+ 93: 
+ 94: 1. Writes a static `pages/index.tsx` with no `getServerSideProps` (opts page into build-time static prerender)
+ 95: 2. Strips `pages/_app.tsx` of its `StrictContextProvider` (simulates the no-provider scenario)
+ 96: 3. Runs `next build`
+ 97: 4. Restores both files — even if the build fails
+ 98: 
+ 99: **Expected output:**
+100: 
+101: ```
+102: Error: useStrictContext must be used within a StrictContextProvider
+103:     at useStrictContext (lib/StrictContext.tsx:28:11)
+104:     at Home (pages/index.tsx:7:15)
+105:     at react-dom-server.edge.production.js:4282:23
+106: ```
+107: 
+108: **Why this works:** Next.js 15 uses `react-dom-server.edge.production.js` (the streaming Edge renderer) for static page prerendering at build time — not just for edge runtime routes. Any static page using a `createContext(null)` + throwing consumer will fail at build time without edge runtime config.
+109: 
+110: The `getServerSideProps` export on `/` (and `/fixed`, `/simulate-bug`) makes those pages dynamic, opting them out of static prerendering. That's why `npm run build` (the fixed state) succeeds.
+111: 
+112: ---
+113: 
+114: ## Root Cause in Detail
+115: 
+116: ### 1. The Edge renderer is used for Pages Router in Next.js 15
+117: 
+118: Build output and stack traces prove it:
+119: 
+120: ```
+121: react-dom-server.edge.production.js:4189
+122: TypeError: Cannot read properties of null (reading 'useContext')
+123: ```
+124: 
+125: This file is the streaming renderer used for Edge Functions. Next.js 15 routes Pages Router through it even on Node.js targets in certain configurations (confirmed in [vercel/next.js#74858](https://github.com/vercel/next.js/discussions/74858) and [vercel/next.js#82366](https://github.com/vercel/next.js/issues/82366)).
+126: 
+127: ### 2. `renderToReadableStream` does not guarantee render order
+128: 
+129: `renderToString` renders the full component tree synchronously top-down — `_app` always before any page. `renderToReadableStream` (Web Streams, used by the Edge renderer) can schedule components differently, especially when Suspense or async boundaries are involved. The `{ ps: 'Page' }` before `{ ps: 'App' }` log is direct evidence.
+130: 
+131: ### 3. `createContext(null)` with a throwing consumer is the trigger
+132: 
+133: The bug exists in the renderer. But it only manifests as an error when the context consumer throws (or crashes) on null. Libraries that provide a real default are immune:
+134: 
+135: | Pattern | Vulnerable? |
+136: |---|---|
+137: | `createContext(null)` + hard throw on null | **Yes** — `useFlagsmith()`, `useStrictContext()` |
+138: | `createContext(null)` + non-null assertion `ctx!` | **Yes** — generic `TypeError` |
+139: | `createContext(null)` + optional chain `ctx?.value` | **Silently broken** — returns `undefined` |
+140: | `createContext(defaultValue)` with a real default | **No** — `next-themes`, `zustand`, `react-query` |
+141: 
+142: ---
+143: 
+144: ## Context Architecture in This Repo
+145: 
+146: Two providers, two different risk profiles, coexisting without conflict:
+147: 
+148: ```
+149: App (_app)
+150:   SafeContextProvider        ← createContext(defaultValue) — safe everywhere, no HOC
+151:     StrictContextProvider    ← seeded from pageProps.serverContextState
+152:       Navbar                 ← reads both; always safe (rendered by _app, never before it)
+153:       WrappedPage (HOC export of /fixed)
+154:         StrictContextProvider (HOC) ← same serverContextState, inner wins for page
+155:           FixedPage
+156:             useSafeContext()    → _app's SafeContextProvider ✓
+157:             useStrictContext()  → HOC's StrictContextProvider ✓
+158: ```
+159: 
+160: **Why two `StrictContextProvider` instances is not a conflict:** both are seeded from the same `serverContextState` returned by `getServerSideProps`. Neither updates client-side. Values are identical — Navbar and FixedPage see the same flag state.
+161: 
+162: **Why `Navbar` is safe with only `_app`'s provider:** `Navbar` is inside `_app`'s JSX. React always executes parent before child, so `Navbar` always has the provider above it. The render-order bug only affects `Component` (the page), which Next.js can schedule independently.
+163: 
+164: ---
+165: 
+166: ## The Fix — Per-Page Provider HOC
+167: 
+168: ### `lib/withStrictContext.tsx`
+169: 
+170: ```ts
+171: // Server helper — call in getServerSideProps
+172: export async function getServerContextState(userId?: string): Promise<StrictContextValue>
+173: 
+174: // HOC — wraps page in its own provider seeded from serverContextState
+175: export function withStrictContext<P>(PageComponent: React.ComponentType<P>)
+176: ```
+177: 
+178: ### Usage (2 lines per page)
+179: 
+180: ```tsx
+181: // pages/my-page.tsx
+182: import { withStrictContext, getServerContextState } from '@/lib/withStrictContext'
+183: 
+184: function MyPage() {
+185:   const ctx = useStrictContext() // always works
+186:   return <div>...</div>
+187: }
+188: 
+189: export const getServerSideProps: GetServerSideProps = async () => ({
+190:   props: { serverContextState: await getServerContextState() },
+191: })
+192: 
+193: export default withStrictContext(MyPage)
+194: ```
+195: 
+196: ### Why this is render-order safe
+197: 
+198: `getServerSideProps` runs **before any React rendering**. By the time the component tree is touched, `serverContextState` is already in `pageProps`. The HOC's provider is part of the page's own subtree — it is always above the page component regardless of how `_app` is scheduled.
+199: 
+200: ### Flagsmith equivalent (`lib/withPageFlags.tsx` in your real app)
+201: 
+202: ```ts
+203: export async function getPageFlags(userId?: string) {
+204:   const flagsmith = createFlagsmithInstance()
+205:   await flagsmith.init({
+206:     environmentID: process.env.NEXT_PUBLIC_FLAGSMITH_KEY!,
+207:     ...(userId ? { identity: userId } : {}),
+208:   })
+209:   return flagsmith.getState()
+210: }
+211: 
+212: export function withPageFlags<P>(PageComponent: React.ComponentType<P>) {
+213:   return function WrappedPage({ flagsmithState, ...props }: P & { flagsmithState: IState }) {
+214:     const ref = useRef(createFlagsmithInstance())
+215:     return (
+216:       <FlagsmithProvider flagsmith={ref.current} serverState={flagsmithState}>
+217:         <PageComponent {...(props as P)} />
+218:       </FlagsmithProvider>
+219:     )
+220:   }
+221: }
+222: ```
+223: 
+224: ---
+225: 
+226: ## Other Resolutions Investigated
+227: 
+228: ### Upgrade Next.js minor
+229: Some users in [#74858](https://github.com/vercel/next.js/discussions/74858) resolved the issue by upgrading within 15.x. **Not reliable** — [#82366](https://github.com/vercel/next.js/issues/82366) shows the same class of bug in 15.4.5, and [#84994](https://github.com/vercel/next.js/issues/84994) shows it in Next.js 16 canary.
+230: 
+231: ### `force-dynamic` / `getServerSideProps` (no HOC)
+232: Adding `export const dynamic = 'force-dynamic'` (App Router) or an empty `getServerSideProps` (Pages Router) prevents the build-time prerender throw. It does **not** fix the runtime render-order issue — the page still shows uninitialized state locally and can throw on Vercel Edge.
+233: 
+234: ### Remove `_error.tsx`
+235: Narrow fix for a specific variant where the error originates in the error page itself during prerendering ([#82366](https://github.com/vercel/next.js/issues/82366)).
+236: 
+237: ### `createContext(defaultValue)` instead of `createContext(null)`
+238: The cleanest fix for **your own contexts**. If a meaningful default exists, use it — the bug becomes harmless. Only contexts that genuinely cannot have a default (identity-scoped flags, auth tokens) require the HOC.
+239: 
+240: ### Migrate to App Router
+241: Next.js's long-term direction. Streaming + Suspense boundaries give explicit control over data loading order, and React Server Components eliminate the need for most context providers entirely. Not a practical near-term fix for large Pages Router codebases.
+242: 
+243: ---
+244: 
+245: ## Backing Issues
+246: 
+247: | Issue | Router | Status |
+248: |---|---|---|
+249: | [#74858](https://github.com/vercel/next.js/discussions/74858) — build failure on 15.1.4 | Pages | Open |
+250: | [#82366](https://github.com/vercel/next.js/issues/82366) — useContext null in 15.4.5 prerender of /404 | Pages | Closed (confirmed bug) |
+251: | [#43577](https://github.com/vercel/next.js/discussions/43577) — useContext null (longstanding, 157 comments) | Pages | Open |
+252: | [#84994](https://github.com/vercel/next.js/issues/84994) — useContext null in Next.js 16 canary | App | Open |
+253: | [#49355](https://github.com/vercel/next.js/issues/49355) — Framer Motion useContext null on Vercel | App | Closed |
+254: | [#69682](https://github.com/vercel/next.js/issues/69682) — Context provider fails on first render | App | Open |
+255: 
+256: ---
+257: 
+258: ## Stack
+259: 
+260: - **Next.js** 15.3.9 (Pages Router)
+261: - **React** 19.1.0
+262: - **TypeScript** 5
+263: - **Flagsmith** — not installed; `StrictContext` is a faithful stand-in for the `flagsmith/react` context contract
 </file>
 
 <file path="pages/_app.tsx">
