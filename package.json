@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "simulate": "node scripts/simulate-render-order-bug.mjs"
+    "simulate": "node scripts/simulate-render-order-bug.mjs",
+    "pack": "repomix"
   },
   "dependencies": {
     "next": "15.3.9",
@@ -17,6 +18,7 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "repomix": "^1.13.1",
     "typescript": "^5"
   }
 }

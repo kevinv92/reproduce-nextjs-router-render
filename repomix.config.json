@@ -1,0 +1,26 @@
+{
+  "output": {
+    "filePath": "repomix-output.xml",
+    "style": "xml",
+    "showLineNumbers": true,
+    "copyToClipboard": false
+  },
+  "ignore": {
+    "useGitignore": true,
+    "useDefaultPatterns": true,
+    "customPatterns": [
+      ".next/**",
+      "node_modules/**",
+      "repomix-output.xml",
+      "package-lock.json"
+    ]
+  },
+  "include": [
+    "lib/**",
+    "pages/**",
+    "scripts/**",
+    "*.ts",
+    "*.json",
+    "*.md"
+  ]
+}

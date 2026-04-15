@@ -74,6 +74,19 @@ export function withStrictContext<P extends Record<string, unknown>>(
     serverContextState,
     ...props
   }: P & { serverContextState: StrictContextValue }) {
+    // Catch the most common mistake early: page uses withStrictContext but
+    // getServerSideProps forgot to return serverContextState. In production
+    // this would silently fall back to uninitialized state; in dev it throws
+    // immediately with a clear message pointing at the missing prop.
+    if (process.env.NODE_ENV === "development" && serverContextState == null) {
+      throw new Error(
+        `withStrictContext: serverContextState is missing from pageProps for ` +
+          `"${PageComponent.displayName ?? PageComponent.name}". ` +
+          `Add getServerSideProps that calls getServerContextState() and ` +
+          `returns { props: { serverContextState } }.`
+      );
+    }
+
     // useRef so createInstance isn't called on every render (mirrors
     // the flagsmith HOC using useRef(createFlagsmithInstance()))
     const stateRef = useRef(serverContextState);

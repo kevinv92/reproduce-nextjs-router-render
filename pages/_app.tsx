@@ -69,6 +69,14 @@ function Navbar() {
 //
 // SafeContext has no HOC — one provider in _app is enough because a missing
 // provider falls back to the default value rather than throwing.
+//
+// Pages WITHOUT the HOC (/index, /edge):
+//   pageProps.serverContextState is undefined → _app's StrictContextProvider
+//   starts with { initialized: false, data: {} }. Locally these pages render
+//   but show uninitialized flag state — the wrong behaviour, just not loud.
+//   On Vercel Edge the page can execute before _app mounts its provider; then
+//   useStrictContext() sees null and throws. /simulate-bug reproduces the throw
+//   locally.
 export default function App({ Component, pageProps }: AppProps) {
   console.log({ ps: "App", phase: "render" });
 

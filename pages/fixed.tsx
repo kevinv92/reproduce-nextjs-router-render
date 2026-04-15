@@ -1,6 +1,16 @@
 import type { GetServerSideProps } from "next";
-import { useStrictContext } from "@/lib/StrictContext";
-import { useSafeContext } from "@/lib/SafeContext";
+import { useStrictContext, type StrictContextValue } from "@/lib/StrictContext";
+import { useSafeContext, type SafeContextValue } from "@/lib/SafeContext";
+
+// Typed at the getServerSideProps boundary only. FixedPage itself reads
+// from context (useStrictContext, useSafeContext) rather than from props.
+// serverContextState is consumed by the HOC wrapper; safeContextValue is
+// consumed by _app's SafeContextProvider via pageProps — neither is a prop
+// of FixedPage itself.
+interface PageProps {
+  serverContextState: StrictContextValue;
+  safeContextValue: SafeContextValue;
+}
 import {
   withStrictContext,
   getServerContextState,
@@ -119,7 +129,7 @@ function FixedPage() {
   );
 }
 
-export const getServerSideProps: GetServerSideProps = async () => {
+export const getServerSideProps: GetServerSideProps<PageProps> = async () => {
   const serverContextState = await getServerContextState();
 
   // SafeContext doesn't need server data for correctness (default value

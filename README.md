@@ -71,10 +71,10 @@ npm run dev
 
 | Route | What it shows |
 |---|---|
-| `/` | **Broken** — throws `useStrictContext must be used within a StrictContextProvider` |
-| `/simulate-bug` | Server-side reproduction — error caught and displayed |
-| `/fixed` | **Fixed** — HOC pattern, both contexts working side by side |
-| `/edge` | `experimental-edge` runtime — throws on Vercel Edge naturally |
+| `/` | **Broken** — no HOC, no `serverContextState`. Locally: renders with `initialized: false` (wrong data). On Vercel Edge: throws |
+| `/simulate-bug` | **Throw reproduced locally** — `getServerSideProps` renders a hook consumer without any provider, catches and displays the error |
+| `/fixed` | **Fixed** — HOC pattern, both contexts initialized correctly, side-by-side comparison |
+| `/edge` | `experimental-edge` runtime — same broken pattern as `/`; throws on Vercel Edge |
 
 ---
 
@@ -196,7 +196,7 @@ export function withPageFlags<P>(PageComponent: React.ComponentType<P>) {
 Some users in [#74858](https://github.com/vercel/next.js/discussions/74858) resolved the issue by upgrading within 15.x. **Not reliable** — [#82366](https://github.com/vercel/next.js/issues/82366) shows the same class of bug in 15.4.5, and [#84994](https://github.com/vercel/next.js/issues/84994) shows it in Next.js 16 canary.
 
 ### `force-dynamic` / `getServerSideProps` (no HOC)
-Adding `export const dynamic = 'force-dynamic'` (App Router) or an empty `getServerSideProps` (Pages Router) prevents the build-time prerender throw. It does **not** fix the runtime render-order issue — the page can still throw at request time on Vercel Edge.
+Adding `export const dynamic = 'force-dynamic'` (App Router) or an empty `getServerSideProps` (Pages Router) prevents the build-time prerender throw. It does **not** fix the runtime render-order issue — the page still shows uninitialized state locally and can throw on Vercel Edge.
 
 ### Remove `_error.tsx`
 Narrow fix for a specific variant where the error originates in the error page itself during prerendering ([#82366](https://github.com/vercel/next.js/issues/82366)).
